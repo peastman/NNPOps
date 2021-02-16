@@ -27,7 +27,7 @@ import tempfile
 import torch
 import torchani
 
-from NNPOps.SymmetryFunctions import TorchANISymmetryFunctions
+from NNPOps.BatchedNN import TorchANIBatchedNN
 
 @pytest.mark.parametrize('deviceString', ['cpu', 'cuda'])
 @pytest.mark.parametrize('molFile', ['1hvj', '1hvk', '2iuz', '3hkw', '3hky', '3lka', '3o99'])
@@ -37,14 +37,14 @@ def test_compare_with_native(deviceString, molFile):
 
     mol = mdtraj.load(f'molecules/{molFile}_ligand.mol2')
     atomicNumbers = torch.tensor([[atom.element.atomic_number for atom in mol.top.atoms]], device=device)
-    atomicPositions = torch.tensor(mol.xyz * 10, dtype=torch.float32, requires_grad=True, device=device)
+    atomicPositions = torch.tensor(mol.xyz, dtype=torch.float32, requires_grad=True, device=device)
 
     nnp = torchani.models.ANI2x(periodic_table_index=True).to(device)
     energy_ref = nnp((atomicNumbers, atomicPositions)).energies
     energy_ref.backward()
     grad_ref = atomicPositions.grad.clone()
 
-    nnp.aev_computer = TorchANISymmetryFunctions(nnp.aev_computer)
+    nnp.neural_networks = TorchANIBatchedNN(nnp.species_converter, nnp.neural_networks, atomicNumbers).to(device)
     energy = nnp((atomicNumbers, atomicPositions)).energies
     atomicPositions.grad.zero_()
     energy.backward()
@@ -58,10 +58,7 @@ def test_compare_with_native(deviceString, molFile):
         return
 
     assert energy_error < 5e-7
-    if molFile == '1hvk': # Reduce tolerance
-        assert grad_error < 0.02
-    else:
-        assert grad_error < 5e-3
+    assert grad_error < 5e-3
 
 @pytest.mark.parametrize('deviceString', ['cpu', 'cuda'])
 @pytest.mark.parametrize('molFile', ['1hvj', '1hvk', '2iuz', '3hkw', '3hky', '3lka', '3o99'])
@@ -71,10 +68,10 @@ def test_model_serialization(deviceString, molFile):
 
     mol = mdtraj.load(f'molecules/{molFile}_ligand.mol2')
     atomicNumbers = torch.tensor([[atom.element.atomic_number for atom in mol.top.atoms]], device=device)
-    atomicPositions = torch.tensor(mol.xyz * 10, dtype=torch.float32, requires_grad=True, device=device)
+    atomicPositions = torch.tensor(mol.xyz, dtype=torch.float32, requires_grad=True, device=device)
 
     nnp_ref = torchani.models.ANI2x(periodic_table_index=True).to(device)
-    nnp_ref.aev_computer = TorchANISymmetryFunctions(nnp_ref.aev_computer)
+    nnp_ref.neural_networks = TorchANIBatchedNN(nnp_ref.species_converter, nnp_ref.neural_networks, atomicNumbers).to(device)
 
     energy_ref = nnp_ref((atomicNumbers, atomicPositions)).energies
     energy_ref.backward()
